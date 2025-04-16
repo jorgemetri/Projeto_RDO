@@ -390,7 +390,7 @@ def ExecutarAnalise(df_entrada,data_inicio,data_fim):
     st.write(f'Tempo para executar:PegarTodosRelatoriosObras  {fim-inicio}')
     sum+=fim-inicio
     inicio = time.time()
-    df = CriaRelatorioObra(ids_relatorios)
+    df = CriaRelatorioObra(ids_relatorios,data_inicio,data_fim)
     fim  = time.time()
     st.write(f'Tempo para executar:CriaRelatorioObra  {fim-inicio}')
     sum+=fim-inicio
@@ -455,7 +455,23 @@ def salvar_dataframe_em_excel(df: pd.DataFrame) -> io.BytesIO:
         return buffer
     except Exception as e:
         raise Exception(f"Erro ao converter o DataFrame para Excel: {e}")
-    
+    """
+Dado um vetor de id de obras essa função ira retornar um vetor no 
+formato:
+ [ {id_obra_1:[id_relatorio_1,id_relatorio_2,...]},{id_obra_2:[]},...,{id_obra_n:[id_relatorio_1,...]}]
+"""
+def PegarTodosRelatoriosObras(obras_id, data_inicio, data_fim):
+    ids_relatorios_obras = []
+    for obra_id in obras_id:
+        if obra_id:  # Check if obra_id is not empty or None
+            relatorios = PegarRelatoriosObra(obra_id, data_inicio, data_fim)
+            report_ids = []
+            for relatorio in relatorios.json():
+                report_ids.append(relatorio['_id'])
+            # Only add the dictionary if there is at least one report
+            if report_ids:
+                ids_relatorios_obras.append({obra_id: report_ids})
+    return ids_relatorios_obras
 #Verificar Arquivo Excel----------------------------------------------------------------------
 def verificar_arquivo_excel(caminho_arquivo: str) -> bool:
     """
@@ -482,3 +498,52 @@ def verificar_arquivo_excel(caminho_arquivo: str) -> bool:
         # Outros erros (permissão, arquivo corrompido, etc.)
         print(f"Erro ao tentar acessar o arquivo {caminho_arquivo}: {e}")
         return False
+#----------------------------------------------------------------------------------------------------------------------------------
+def CriaRelatorioObra(vetorObraRelatorio, data_inicio, data_fim):
+    columns = [
+        'Numero Relatorio', 'Data RDO', 'Nome Obra', 'Nome', 'Nome Empresa',
+        'Nao Conforme?', 'Intervalo Hora', 'Horario SAM', 'Horario RDO',
+        'Incosisten. Acesso', 'Valor Horas Trabalhadas'
+    ]
+    df = pd.DataFrame(columns=columns)
+
+    for elemento in vetorObraRelatorio:
+        id_obra = list(elemento.keys())[0]
+        lista_relatorios = elemento[id_obra]
+        print(f"Processando obra {id_obra} com relatórios: {lista_relatorios}")
+
+        for relatorio in lista_relatorios:
+            result = RetornaDataNumeroNomeObra(id_obra, relatorio, data_inicio, data_fim)
+            if result is None:
+                print(f"Relatório {relatorio} da obra {id_obra} não encontrado. Pulando...")
+                continue
+
+            data_RDO, numero, nome_obra = result
+            response = VisualizarRelatorio(id_obra, relatorio)
+            if response.status_code != 200:
+                print(f"Erro ao visualizar relatório {relatorio}: Status {response.status_code}")
+                continue
+            try:
+                pessoas = response.json()['maoDeObra']['personalizada']
+                print(f"Pessoas no relatório {relatorio}: {[p.get('nome', '') for p in pessoas]}")
+            except KeyError as e:
+                print(f"Erro no JSON do relatório {relatorio}: Chave {e} não encontrada")
+                continue
+
+            for pessoa in pessoas:
+                row_data = [
+                    numero,
+                    data_RDO,
+                    nome_obra,
+                    pessoa.get('nome', ''),
+                    'LMI',
+                    0,
+                    '',
+                    '',
+                    pessoa.get('horaInicio', ''),
+                    '',
+                    pessoa.get('horasTrabalhadas', 0)
+                ]
+                df.loc[len(df)] = row_data
+
+    return df
